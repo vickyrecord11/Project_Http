@@ -3,6 +3,9 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.util.*;
 import com.google.gson.Gson;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
 
 class User {
     int id;
@@ -80,13 +83,29 @@ class UserHandler implements HttpHandler{
             return;
         }
 
-        User newUser = gson.fromJson(body, User.class);
+        //User newUser = gson.fromJson(body, User.class);
+        JsonObject obj = JsonParser.parseString(body).getAsJsonObject();
+        
 
-        if (newUser.name == null) {
+
+        if (!obj.has("name") || obj.get("name").isJsonNull()) {
             sendJson(exchange, 400, "Invalid JSON (name required)", null);
             return;
         }
+
+        String name = obj.get("name").getAsString();
+
+        int age = 0;
+
+        if(obj.has("age") && !obj.get("age").isJsonNull()){
+            age = obj.get("age").getAsInt();
+        }
+
+        User newUser = new User();
+        newUser.name = name;
+        newUser.age = age;
         newUser.id = App.users.size();
+
         App.users.add(newUser);
 
         sendJson(exchange, 201, "User created successfully", newUser);
@@ -101,16 +120,34 @@ class UserHandler implements HttpHandler{
             return;
         }
 
-        User updatedUser = gson.fromJson(body, User.class);
+        //User updatedUser = gson.fromJson(body, User.class);
+        JsonObject obj = JsonParser.parseString(body).getAsJsonObject();
 
-        if (updatedUser.id < 0 || updatedUser.id >= App.users.size()) {
+        if(!obj.has("id")){
+            sendJson(exchange, 400, "ID is required", null);
+            return;
+        }
+
+        int id = obj.get("id").getAsInt();
+
+        if (id < 0 || id >= App.users.size()) {
             sendJson(exchange, 404, "User not found", null);
             return;
         }
 
-        App.users.set(updatedUser.id, updatedUser);
+        User existing = App.users.get(id);
 
-        sendJson(exchange, 200, "User updated successfully", updatedUser);
+        if(obj.has("name")){
+            existing.name = obj.get("name").getAsString();
+        }
+
+        if(obj.has("age")){
+            existing.age = obj.get("age").getAsInt();
+        }
+
+        //App.users.set(updatedUser.id, updatedUser);
+
+        sendJson(exchange, 200, "User updated successfully", existing);
     }
 
     private void handleDelete(HttpExchange exchange) throws IOException {
@@ -151,12 +188,22 @@ class UserHandler implements HttpHandler{
 
     private void sendJson(HttpExchange exchange, int status, String message, Object data) throws IOException {
 
-        Map<String, Object> response = new HashMap<>();
-        response.put("status", status);
-        response.put("message", message);
-        response.put("data", data);
+        JsonObject response = new JsonObject();
 
-        String json = gson.toJson(response);
+        response.addProperty("status", status);
+        response.addProperty("message", message);
+
+        if (data != null) {
+        response.add("data", gson.toJsonTree(data));
+    } else {
+        response.add("data", null);
+    }
+
+        // response.put("status", status);
+        // response.put("message", message);
+        // response.put("data", data);
+
+        String json = response.toString();
 
         exchange.getResponseHeaders().set("Content-Type", "application/json");
 
