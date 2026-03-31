@@ -6,15 +6,20 @@ import com.google.gson.Gson;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonSyntaxException;
 
-class User {
-    int id;
-    String name; 
-    int age;
-}
+
+// class User {
+//     int id;
+//     String name; 
+//     int age;
+// }
 
 public class App {
-    public static List<User> users = new ArrayList<>();
+    public static List<JsonObject> users = new ArrayList<>();
+
+    public static int idCounter = 0;
 
     public static void main(String[] args) throws Exception {
         
@@ -59,9 +64,11 @@ class UserHandler implements HttpHandler{
                 sendJson(exchange, 405, "Method not allowed", null);
     
         }
-    }   catch(Exception e){
-        sendJson(exchange, 500, "Internal serer error: " + e.getMessage(), null);
-    }
+    }   catch (JsonSyntaxException e) {
+            sendJson(exchange, 400, "Invalid JSON format", null);
+        } catch (Exception e) {
+            sendJson(exchange, 500, "Internal server error: " + e.getMessage(), null);
+        }
     }
     
 
@@ -76,6 +83,12 @@ class UserHandler implements HttpHandler{
 
      private void handlePost(HttpExchange exchange) throws IOException {
 
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (contentType == null || !contentType.contains("application/json")) {
+            sendJson(exchange, 400, "Content-Type must be application/json", null);
+            return;
+        }
+
         String body = readBody(exchange);
 
         if (body == null || body.trim().isEmpty()) {
@@ -84,34 +97,32 @@ class UserHandler implements HttpHandler{
         }
 
         //User newUser = gson.fromJson(body, User.class);
-        JsonObject obj = JsonParser.parseString(body).getAsJsonObject();
-        
-
+       JsonObject obj = JsonParser.parseString(body).getAsJsonObject();
 
         if (!obj.has("name") || obj.get("name").isJsonNull()) {
-            sendJson(exchange, 400, "Invalid JSON (name required)", null);
+            sendJson(exchange, 400, "Name is required", null);
             return;
         }
 
-        String name = obj.get("name").getAsString();
-
-        int age = 0;
-
-        if(obj.has("age") && !obj.get("age").isJsonNull()){
-            age = obj.get("age").getAsInt();
+        if (obj.has("age") && !obj.get("age").isJsonPrimitive()) {
+            sendJson(exchange, 400, "Age must be a number", null);
+            return;
         }
 
-        User newUser = new User();
-        newUser.name = name;
-        newUser.age = age;
-        newUser.id = App.users.size();
+        obj.addProperty("id", App.idCounter++);
 
-        App.users.add(newUser);
+        App.users.add(obj);
 
-        sendJson(exchange, 201, "User created successfully", newUser);
+        sendJson(exchange, 201, "User created successfully", obj);
     }         
     
     private void handlePut(HttpExchange exchange) throws IOException {
+
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (contentType == null || !contentType.contains("application/json")) {
+            sendJson(exchange, 400, "Content-Type must be application/json", null);
+            return;
+}
 
         String body = readBody(exchange);
 
@@ -123,29 +134,33 @@ class UserHandler implements HttpHandler{
         //User updatedUser = gson.fromJson(body, User.class);
         JsonObject obj = JsonParser.parseString(body).getAsJsonObject();
 
-        if(!obj.has("id")){
+        if (!obj.has("id")) {
             sendJson(exchange, 400, "ID is required", null);
             return;
         }
 
         int id = obj.get("id").getAsInt();
 
-        if (id < 0 || id >= App.users.size()) {
+        JsonObject existing = null;
+        for (JsonObject user : App.users) {
+            if (user.get("id").getAsInt() == id) {
+                existing = user;
+                break;
+            }
+        }
+
+        if (existing == null) {
             sendJson(exchange, 404, "User not found", null);
             return;
         }
 
-        User existing = App.users.get(id);
-
-        if(obj.has("name")){
-            existing.name = obj.get("name").getAsString();
+        if (obj.has("name")) {
+            existing.addProperty("name", obj.get("name").getAsString());
         }
 
-        if(obj.has("age")){
-            existing.age = obj.get("age").getAsInt();
+        if (obj.has("age")) {
+            existing.addProperty("age", obj.get("age").getAsInt());
         }
-
-        //App.users.set(updatedUser.id, updatedUser);
 
         sendJson(exchange, 200, "User updated successfully", existing);
     }
@@ -159,16 +174,33 @@ class UserHandler implements HttpHandler{
             return;
         }
 
-        int id = Integer.parseInt(query.split("=")[1]);
+       int id;
 
-        if (id < 0 || id >= App.users.size()) {
+        // ✅ CHANGE: Safe query parsing
+        try {
+            id = Integer.parseInt(query.split("=")[1]);
+        } catch (Exception e) {
+            sendJson(exchange, 400, "Invalid ID format", null);
+            return;
+        }
+
+        // ✅ CHANGE: Find user safely
+        JsonObject toRemove = null;
+        for (JsonObject user : App.users) {
+            if (user.get("id").getAsInt() == id) {
+                toRemove = user;
+                break;
+            }
+        }
+
+        if (toRemove == null) {
             sendJson(exchange, 404, "User not found", null);
             return;
         }
 
-        User removedUser = App.users.remove(id);
+        App.users.remove(toRemove);
 
-        sendJson(exchange, 200, "User deleted successfully", removedUser);
+        sendJson(exchange, 200, "User deleted successfully", toRemove);
     }
 
     private String readBody(HttpExchange exchange) throws IOException {
@@ -194,9 +226,13 @@ class UserHandler implements HttpHandler{
         response.addProperty("message", message);
 
         if (data != null) {
+    if (data instanceof JsonElement) {
+        response.add("data", (JsonElement) data);
+        } else {
         response.add("data", gson.toJsonTree(data));
+        }
     } else {
-        response.add("data", null);
+    response.add("data", null);
     }
 
         // response.put("status", status);
